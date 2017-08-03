@@ -1,0 +1,49 @@
+#Model predictive control project
+
+##The vehicle model
+The model used in this project is the kinematic bicycle model given by the following equations, where *x* and *y* denote the position of the car, *psi* the heading direction, *v* its velocity, *cte* the cross-track error and *epsi* the orientarion error:
+>x[t+1] = x[t] + v[t] * cos(psi[t]) * dt  
+>y[t+1] = y[t] + v[t] * sin(psi[t]) * dt  
+>psi[t+1] = psi[t] + v[t]/Lf * delta[t] * dt  
+>v[t+1] = v[t] + a[t] * dt  
+>cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt  
+>epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt  
+
+It should be noted that the model takes into account the changes in heading. 
+
+##Timestep Length and Elapsed Duration (N & dt)
+The time T=N dt defines the prediction horizon. Short prediction horizons lead to more responsive controlers, but are less accurate and can suffer from instabilities when chosen too short. Long prediction horizons generally lead to smoother controls. For a given prediction horizon shorter time steps dt imply more accurate controls but also require a larger MPC problem to be solved, thus increasing latency.
+
+Here I chose values of N and dt such that drives the car smoothly around the track. The values are N=12 and dt=0.05. Note that the 100ms = 2*dt latency imply that the controls of the first two time steps are not used in the optimization. They are frozen to the values of the previous actuations.
+
+##Polynomial Fitting and MPC Preprocessing
+Internally we work with the vehicle coordinate system and, therefore, it is necessary to transform the given coordinates from global coordinate system to our local coordinate system. This is done in the function *changeToLocalCoordinates*. The transformation consists in translating the points to the current vehicle position and rotating them through the heading angle. Here are the equations used: 
+
+> X = cos(psi) * (ptsx[i] - x) + sin(psi) * (ptsy[i] - y)  
+>  Y =  -sin(psi) * (ptsx[i] - x) + cos(psi) * (ptsy[i] - y)
+
+where X and Y denote coordinates in the vehicle coordinate system. Note that the initial position of the car and heading direction are always zero in this frame. Thus, initially the state of the car in the vehicle coordinate system is:
+
+>> state << 0, 0, 0, c, cte, epsi
+
+##Model Predictive Control with Latency
+In this project we take into account the latency, that is, the delayed actuations. We work with a latency of 100ms, thus, a delay of 100ms is introduces before the actuations are sent back to the simulator.
+
+If we do not consider these delays in our control we can obtain a bad performance of the system, with oscillations and bad computation of trajectories.
+
+In order to deal with this latency, the actuations are forced to remain at their previous values for the time of the latency. Thus, the optimal trajectory is computed starting from the time after the latency period. 
+
+This is implemented in MPC::Solve like so:
+
+>// constrain delta to be the previous control for the latency time  
+> for (int i = delta_start; i < delta_start + latency_ind; i++) {  
+>    vars_lowerbound[i] = delta_prev;  
+>    vars_upperbound[i] = delta_prev;  
+> }  
+>...   
+  
+>  // constrain a to be the previous control for the latency time   
+>  for (int i = a_start; i < a_start+latency_ind; i++) {  
+>   vars_lowerbound[i] = a_prev;  
+>   vars_upperbound[i] = a_prev;  
+> }  
